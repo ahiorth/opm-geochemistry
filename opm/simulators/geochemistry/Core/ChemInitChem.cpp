@@ -885,6 +885,8 @@ void InitChem::init_chemistry_hkf()
     if (!SM_basis_->mol_weight_.empty())
     {
         calculate_mol_weight_mineral(*SM_mineral_, *SM_basis_);
+        // Also for the aqueous complexes (used for the solution density)
+        calculate_mol_weight_mineral(*SM_all_, *SM_basis_);
     }
 
     if (SM_mineral_->type_.empty())

@@ -920,6 +920,7 @@ void BasVec::write_info(BasVecInfo* info){
     key_solution_properties["Ionic_strength"] = Io_;
     key_solution_properties["Water_permittivity"] = ICS_->CP_.ew_;
     key_solution_properties["Water_density"] = ICS_->CP_.rho_w_;
+    key_solution_properties["Solution_density"] = solution_density();
     info->key_solution_properties_ = key_solution_properties;
 
     std::map<std::pair<std::string, std::string>, double> species_properties;
@@ -1101,6 +1102,66 @@ double BasVec::update_ionic_strength()
     }
     Io_ *= 0.5;
     return Io_;
+}
+
+/*
+ * Solution (brine) density [kg/m^3] from the speciated composition.
+ *
+ * Per kg of solvent water the mass is 1 + sum_i m_i M_i and the volume is
+ * 1/rho_w + sum_i m_i V_i, where m_i are the molalities of all aqueous
+ * species (basis and complexes), M_i their molecular weights and V_i their
+ * HKF standard molal volumes at the current (T, P) as filled in by
+ * hkf::dGIons. Working with the speciated composition means ion pairs
+ * contribute their own standard volumes, which recovers part of the excess
+ * volume of mixing; the remaining infinite-dilution approximation is
+ * consistent with the extended Debye-Hueckel activity model.
+ *
+ * Species without HKF volume parameters contribute zero volume. If the
+ * database provides no molecular weights, the pure-water density is
+ * returned.
+ */
+double BasVec::solution_density() const
+{
+    const ChemTable& SM_all = *ICS_->SM_all_;
+    const ChemTable& SM_basis = *ICS_->SM_basis_;
+
+    const bool basis_ok = static_cast<int>(SM_basis.mol_weight_.size()) >= size_
+                          && static_cast<int>(SM_basis.mol_volume_.size()) >= size_;
+    const bool all_ok = static_cast<int>(SM_all.mol_weight_.size()) >= SM_all.noRows_
+                        && static_cast<int>(SM_all.mol_volume_.size()) >= SM_all.noRows_;
+    if (!basis_ok || !all_ok)
+    {
+        return ICS_->CP_.rho_w_;
+    }
+
+    double mass = 1.0;                        // [kg], per kg of solvent water
+    double volume = 1.0 / ICS_->CP_.rho_w_;   // [m^3]
+
+    // Basis species (skip water itself and the electron).
+    // mol_weight_ is in kg/mol (fix_hkf_units), mol_volume_ in m^3/mol (hkf::dGIons).
+    for (int i = 0; i < size_; ++i)
+    {
+        if (SM_basis.type_[i] == GeochemicalComponentType::AQUEOUS_COMPLEX
+            && i != pos_pe_ && i != pos_water_)
+        {
+            const double m = POW10(log_m_[i]);
+            mass += m*SM_basis.mol_weight_[i];
+            volume += m*SM_basis.mol_volume_[i];
+        }
+    }
+
+    // Secondary species/complexes
+    for (int i = 0; i < SM_all.noRows_; ++i)
+    {
+        if (SM_all.type_[i] == GeochemicalComponentType::AQUEOUS_COMPLEX)
+        {
+            const double m = POW10(SM_all.log_m_[i]);
+            mass += m*SM_all.mol_weight_[i];
+            volume += m*SM_all.mol_volume_[i];
+        }
+    }
+
+    return mass / volume;
 }
 
 /*

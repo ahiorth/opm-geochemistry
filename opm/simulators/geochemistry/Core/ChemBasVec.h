@@ -92,6 +92,11 @@ class BasVec {
     double update_exchange_capacity_dl_model(double frac_DL);
     double update_ionic_strength();
 
+    /* Solution (brine) density [kg/m^3] from the speciated composition and the
+     * HKF standard molal volumes at the current (T, P); see the implementation
+     * for details. */
+    double solution_density() const;
+
     void add_new_buffer_mineral(int ICS_rock, int ICS_buffer);
 
     BasVec* convert_nlin_rate_equations_to_equilibrium(const double* cmin);

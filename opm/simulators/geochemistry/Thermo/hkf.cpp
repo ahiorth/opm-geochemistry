@@ -202,8 +202,10 @@ StandardStateProperties hkf::ionProperties(double T,
                - T*born_TT;
 
     const double MV1 = 1.0 / (Psi_*Pref_inv_ + P*Pref_inv_);
-    const double Chat = 41.84e-3 / UnitConversionFactors::cal2J_;
-    props.V = a1 + a2*MV1 + (a3 + a4*MV1)*theta_diff_inv - 1e5*omega*EPS_->bornQ_ - (EPS_->bornZ_ + 1.0)*w_P*1e5;
+    // = 1e-5 m^3*bar/J: converts the volume sum from J/(mol*bar) to m^3/mol.
+    // born_Q is in 1/Pa and needs the 1e5, while w_P is already in J/(mol*bar).
+    const double Chat = 41.84e-6 / UnitConversionFactors::cal2J_;
+    props.V = a1 + a2*MV1 + (a3 + a4*MV1)*theta_diff_inv - 1e5*omega*EPS_->bornQ_ - (EPS_->bornZ_ + 1.0)*w_P;
     props.V *= Chat;
 
     props.H = props.G + T*props.S + propertyShift(G_ref, H_ref, S_ref, Tref_);
@@ -257,7 +259,8 @@ void hkf::dGIons(double T, double P, double* G, double* S,
 
     // const double Chat = 41.84 * 1e5 / UnitConversionFactors::cal2J_; //Pa*ml/J // @ah fix 27/2 2025
 
-    const double Chat = 41.84*1e-3 / UnitConversionFactors::cal2J_; //bar*m^3/J
+    // = 1e-5 m^3*bar/J: converts the volume sum from J/(mol*bar) to m^3/mol
+    const double Chat = 41.84*1e-6 / UnitConversionFactors::cal2J_;
     
     A3 *= dP;
 //    BORN_->born_f(T);
@@ -288,8 +291,10 @@ void hkf::dGIons(double T, double P, double* G, double* S,
             }
             dG[i] = G[i] - S[i] * dT + c1[i] * C1 + c2[i] * C2 + a1[i] * A1 + a2[i] * A2 + a3[i] * A3
             + a4[i] * A4 + ff + omega[i] * Wref;
-            // Note that born_Q are in 1/Pa, while we switched back to bar to be consitent with original paper, same with w_P
-            MV[i] = a1[i] + a2[i] * MV1 + (a3[i] + a4[i] * MV1)*MV2 - 1e5*omega[i]*EPS_->bornQ_-(EPS_->bornZ_+1)*w_P*1e5;
+            // Note that born_Q is in 1/Pa and needs the 1e5 to get back to bar
+            // (consistent with the original paper), while w_P is already in
+            // J/(mol*bar): born_g_P_ is converted to 1/bar inside born_df.
+            MV[i] = a1[i] + a2[i] * MV1 + (a3[i] + a4[i] * MV1)*MV2 - 1e5*omega[i]*EPS_->bornQ_-(EPS_->bornZ_+1)*w_P;
             MV[i] *= Chat;
             
             /* DEBUG*/

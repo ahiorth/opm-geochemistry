@@ -429,7 +429,11 @@ TEST_CASE("Thermo table calculator reproduces HKF basis species reference data")
     CHECK_THAT(row.G, Catch::Matchers::WithinAbs(-62591.0*UnitConversionFactors::cal2J_, abs_tolerance2_));
     CHECK_THAT(row.H, Catch::Matchers::WithinAbs(-57433.0*UnitConversionFactors::cal2J_, abs_tolerance2_));
     CHECK_THAT(row.S, Catch::Matchers::WithinAbs(13.96*UnitConversionFactors::cal2J_, abs_tolerance2_));
-    CHECK_THAT(row.V, Catch::Matchers::WithinAbs(-1206.704398355, 1.0e-6));
+    // V from the HKF a-parameters and the Born Q term, in cm^3/mol (approx.
+    // -1.1 in SUPCRT92; the difference comes from the Johnson-Norton
+    // dielectric model used here). The pre-2025-07 reference value -1206.7
+    // reflected a unit error (factor 1000) in hkf::ionProperties.
+    CHECK_THAT(row.V, Catch::Matchers::WithinAbs(-1.2067361105, 1.0e-6));
     CHECK_THAT(row.Cp, Catch::Matchers::WithinAbs(38.1192278706, 1.0e-4));
 }
 
