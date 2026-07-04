@@ -139,7 +139,9 @@ the overall conversion (values were L/mol instead of m³/mol) and a spurious
 factor 10⁵ on the Born g-function pressure derivative inside its 155–355 °C
 window. Thermo tables generated before this fix show aqueous-species volumes
 that are wrong by these factors; Gibbs energies, entropies, heat capacities
-and log K values were not affected.
+and log K values were not affected. See
+[hkf_molal_volume_unit_fixes.md](hkf_molal_volume_unit_fixes.md) for the
+full analysis.
 
 ## References
 
