@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <fstream>
 #include <sstream>
@@ -141,6 +142,136 @@ TEST_CASE("Test calculation of saturation pressure for water")
         const double satPress = 1.0e-6*water_props.PsatIAPWS(T);
         CHECK_THAT(satPress, Catch::Matchers::WithinAbs(Psat, abs_tolerance_));
     }
+}
+
+/* Reference values for regions 2 and 3 of IAPWS-97, Tables 15 and 33.
+ * For region 3 the paper tabulates (T, rho) inputs; the pressures below are the
+ * corresponding table values, so the returned density must reproduce rho. */
+struct WaterPropertiesHighTP
+{
+    double pressure_;     // Pa
+    double temperature_;  // K
+    int region_;
+    double v_;   // specific volume (m3/kg)
+    double h_;   // specific enthalpy (kJ/kg)
+    double u_;   // specific internal energy (kJ/kg)
+    double s_;   // specific entropy (kJ/kg/K)
+    double cp_;  // specific isobaric heat capacity (kJ/kg/K)
+    double w_;   // speed of sound (m/s)
+};
+
+TEST_CASE("Test calculation of water properties in IAPWS-97 region 2 (steam)")
+{
+    water water_props;
+
+    // Table 15 of IAPWS-97 paper
+    static constexpr std::array<WaterPropertiesHighTP, 3> reference_cases =
+    {{
+        { 0.0035e6, 300.0, 2, 0.394913866e2, 0.254991145e4, 0.241169160e4, 0.852238967e1, 0.191300162e1, 0.427920172e3 },
+        { 0.0035e6, 700.0, 2, 0.923015898e2, 0.333568375e4, 0.301262819e4, 0.101749996e2, 0.208141274e1, 0.644289068e3 },
+        { 30.0e6,   700.0, 2, 0.542946619e-2, 0.263149474e4, 0.246861076e4, 0.517540298e1, 0.103505092e2, 0.480386523e3 },
+    }};
+
+    for(const auto& ref_props: reference_cases)
+    {
+        water_props.gibbsIAPWS(ref_props.temperature_, ref_props.pressure_);
+
+        CHECK(water_props.region_ == ref_props.region_);
+        CHECK_THAT(water_props.v_, Catch::Matchers::WithinRel(ref_props.v_, 1.0e-8));
+        CHECK_THAT(1.0e-3*water_props.h_, Catch::Matchers::WithinAbs(ref_props.h_, abs_tolerance2_));
+        CHECK_THAT(1.0e-3*water_props.u_, Catch::Matchers::WithinAbs(ref_props.u_, abs_tolerance2_));
+        CHECK_THAT(1.0e-3*water_props.s_, Catch::Matchers::WithinAbs(ref_props.s_, abs_tolerance2_));
+        CHECK_THAT(1.0e-3*water_props.cp_, Catch::Matchers::WithinAbs(ref_props.cp_, abs_tolerance2_));
+        CHECK_THAT(water_props.w_, Catch::Matchers::WithinAbs(ref_props.w_, abs_tolerance2_));
+    }
+}
+
+TEST_CASE("Test calculation of water properties in IAPWS-97 region 3 (supercritical)")
+{
+    water water_props;
+
+    // Table 33 of IAPWS-97 paper: inputs there are (T, rho) = (650, 500), (650, 200)
+    // and (750, 500); the pressures below are the tabulated P(T, rho), so the
+    // density iteration has to recover rho.
+    static constexpr std::array<WaterPropertiesHighTP, 3> reference_cases =
+    {{
+        { 0.255837018e8, 650.0, 3, 1.0/500.0, 0.186343019e4, 0.181226279e4, 0.405427273e1, 0.138935717e2, 0.502005554e3 },
+        { 0.222930643e8, 650.0, 3, 1.0/200.0, 0.237512401e4, 0.226365868e4, 0.485438792e1, 0.446579342e2, 0.383444594e3 },
+        { 0.783095639e8, 750.0, 3, 1.0/500.0, 0.225868845e4, 0.210206932e4, 0.446971906e1, 0.634165359e1, 0.760696041e3 },
+    }};
+
+    for(const auto& ref_props: reference_cases)
+    {
+        water_props.gibbsIAPWS(ref_props.temperature_, ref_props.pressure_);
+
+        CHECK(water_props.region_ == ref_props.region_);
+        CHECK_THAT(water_props.v_, Catch::Matchers::WithinRel(ref_props.v_, 1.0e-6));
+        CHECK_THAT(1.0e-3*water_props.h_, Catch::Matchers::WithinAbs(ref_props.h_, abs_tolerance2_));
+        CHECK_THAT(1.0e-3*water_props.u_, Catch::Matchers::WithinAbs(ref_props.u_, abs_tolerance2_));
+        CHECK_THAT(1.0e-3*water_props.s_, Catch::Matchers::WithinAbs(ref_props.s_, abs_tolerance2_));
+        CHECK_THAT(1.0e-3*water_props.cp_, Catch::Matchers::WithinAbs(ref_props.cp_, 1.0e-3));
+        CHECK_THAT(water_props.w_, Catch::Matchers::WithinAbs(ref_props.w_, 1.0e-3));
+    }
+}
+
+TEST_CASE("Test IAPWS-97 region boundaries and dispatch")
+{
+    water water_props;
+
+    // B23 boundary verification pair from the IAPWS-97 paper (below Eq. 6):
+    // T = 623.15 K <-> P = 16.5291643 MPa
+    CHECK_THAT(1.0e-6*water::PB23IAPWS(623.15), Catch::Matchers::WithinAbs(16.5291643, 1.0e-6));
+
+    // Region 1 (liquid) just below saturation temperature, steam just below Psat
+    water_props.gibbsIAPWS(600.0, 15.0e6);
+    CHECK(water_props.region_ == 1);
+    water_props.gibbsIAPWS(600.0, 10.0e6);  // Psat(600) = 12.34 MPa
+    CHECK(water_props.region_ == 2);
+    water_props.gibbsIAPWS(900.0, 50.0e6);  // high-T steam, above B23 range
+    CHECK(water_props.region_ == 2);
+
+    // Property continuity across the region 1/3 boundary (T = 623.15 K isotherm).
+    // IAPWS-97 guarantees consistency to within ~0.05% in v at the boundaries;
+    // test with a slightly looser tolerance.
+    water water_r1;
+    water water_r3;
+    water_r1.gibbsIAPWS(623.15, 50.0e6);
+    CHECK(water_r1.region_ == 1);
+    water_r3.gibbsIAPWS(623.16, 50.0e6);
+    CHECK(water_r3.region_ == 3);
+    CHECK_THAT(water_r3.v_, Catch::Matchers::WithinRel(water_r1.v_, 5.0e-3));
+    CHECK_THAT(water_r3.h_, Catch::Matchers::WithinRel(water_r1.h_, 5.0e-3));
+    CHECK_THAT(water_r3.s_, Catch::Matchers::WithinRel(water_r1.s_, 5.0e-3));
+    CHECK_THAT(water_r3.alpha_, Catch::Matchers::WithinRel(water_r1.alpha_, 2.0e-2));
+    CHECK_THAT(water_r3.beta_, Catch::Matchers::WithinRel(water_r1.beta_, 2.0e-2));
+
+    // Property continuity across the region 2/3 (B23) boundary at 700 K
+    const double PB23_700 = water::PB23IAPWS(700.0);
+    water water_r2;
+    water_r2.gibbsIAPWS(700.0, 0.999*PB23_700);
+    CHECK(water_r2.region_ == 2);
+    water_r3.gibbsIAPWS(700.0, 1.001*PB23_700);
+    CHECK(water_r3.region_ == 3);
+    CHECK_THAT(water_r3.v_, Catch::Matchers::WithinRel(water_r2.v_, 2.0e-2));
+    CHECK_THAT(water_r3.h_, Catch::Matchers::WithinRel(water_r2.h_, 2.0e-2));
+    CHECK_THAT(water_r3.s_, Catch::Matchers::WithinRel(water_r2.s_, 2.0e-2));
+}
+
+TEST_CASE("Test IAPWS-97 out-of-range conditions raise exceptions")
+{
+    water water_props;
+
+    CHECK_THROWS_AS(water_props.gibbsIAPWS(200.0, 1.0e6), std::domain_error);    // too cold
+    CHECK_THROWS_AS(water_props.gibbsIAPWS(1200.0, 1.0e6), std::domain_error);   // region 5
+    CHECK_THROWS_AS(water_props.gibbsIAPWS(400.0, 150.0e6), std::domain_error);  // above 100 MPa
+    CHECK_THROWS_AS(water_props.gibbsIAPWS(400.0, -1.0e6), std::domain_error);   // negative P
+    CHECK_THROWS_AS(water::PsatIAPWS(700.0), std::domain_error);                 // above Tcrit
+
+    // A failed call must not poison the (T, P) cache: a subsequent valid call
+    // at the previously failing temperature has to be evaluated properly.
+    water_props.gibbsIAPWS(400.0, 1.0e6);
+    CHECK(water_props.region_ == 1);  // liquid: P > Psat(400 K) = 0.246 MPa
+    CHECK(water_props.v_ > 0.0);
 }
 
 TEST_CASE("Test HKF standard-state water properties")
