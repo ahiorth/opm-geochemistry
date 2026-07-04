@@ -3,6 +3,11 @@
 Below are tutorials, and in some cases documentations, for the geochemistry solver itself and the coupling to OPM Flow.
 The intention is to provide examples of the capabilities of the simulators and provide input files/simulation decks.
 
+See also the reference documentation of the internal models:
+
+- [Water and brine thermodynamics](../water_thermodynamics.md) — pure-water equation of state
+  (IAPWS-IF97/IAPWS-95), validity ranges, dielectric constant, and salinity-dependent solution density.
+
 ## Documentation and tutorials for the geochemistry solver
 
 The following tutorials showcase different aspects of the geochemistry solver, with some associated documentation of its
