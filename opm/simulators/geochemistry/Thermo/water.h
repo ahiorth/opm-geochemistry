@@ -44,6 +44,13 @@
  *               obtained with a safeguarded Newton iteration)
  *   - Region 4: the saturation line (PsatIAPWS)
  *
+ * For 100 MPa < P <= 1000 MPa the IAPWS-95 scientific formulation is used
+ * instead (Wagner & Pruss, J. Phys. Chem. Ref. Data 31 (2002) 387; single
+ * Helmholtz equation, here restricted to 273.15 K <= T <= 1073.15 K).
+ * Note: the melting line is NOT checked, so at low temperature and very high
+ * pressure (roughly P > 632 MPa at 273 K, the ice VI field) the returned
+ * properties refer to the metastable liquid.
+ *
  * Region 5 (T > 1073.15 K) is not implemented. Conditions outside the covered
  * ranges raise std::domain_error.
  */
@@ -86,7 +93,7 @@ public:
     double beta_;  // Isothermal compressibility [1/Pa]
     double Psat_;  //  saturation pressure for given T (NaN above the critical temperature)
 
-    int region_;  // IAPWS-97 region used in the last property evaluation
+    int region_;  // IAPWS-97 region used in the last property evaluation (95 = IAPWS-95, P > 100 MPa)
 
 
 private:
@@ -119,6 +126,9 @@ private:
     void region2(double T, double P);
     void region3(double T, double P);
 
+    /* IAPWS-95 scientific formulation, used for 100 MPa < P <= 1000 MPa. */
+    void regionIAPWS95(double T, double P);
+
     /* Sets all member properties from the dimensionless Gibbs free energy g and
     * its (total) derivatives with respect to reduced pressure pi = P/pstar and
     * reduced temperature tau. Shared by regions 1 and 2 (Tables 3 and 12 of the
@@ -126,6 +136,15 @@ private:
     void setFromGibbs(double T, double P, double pstar, double tau,
                       double g, double g_p, double g_pp,
                       double g_t, double g_tt, double g_pt, double g_ptt);
+
+    /* Sets all member properties except alpha_t_ from the dimensionless
+    * Helmholtz free energy phi and its (total) derivatives with respect to
+    * delta = rho/rho_crit and tau = Tcrit/T. Shared by IAPWS-97 region 3 and
+    * IAPWS-95 (they use the same reducing constants); R is the specific gas
+    * constant of the respective formulation. */
+    void setFromHelmholtz(double T, double rho, double R,
+                          double phi, double phi_d, double phi_dd,
+                          double phi_t, double phi_tt, double phi_dt);
 
     /* Dimensionless Helmholtz free energy phi(delta, tau) of region 3
     * (Eq. 28/Table 30 of the IAPWS-97 paper) and its derivatives.
@@ -145,6 +164,28 @@ private:
     /* Isobaric thermal expansion coefficient in region 3; used for the
     * finite-difference evaluation of alpha_t_. Does not touch member state. */
     static double region3Alpha(double T, double P);
+
+    /* Dimensionless Helmholtz free energy phi = phi0 + phir of IAPWS-95 and
+    * its derivatives. delta = rho/rho_crit, tau = Tcrit/T. */
+    static void phiIAPWS95(double delta, double tau,
+                           double& phi, double& phi_d, double& phi_dd,
+                           double& phi_t, double& phi_tt, double& phi_dt);
+
+    /* Pressure [Pa] from IAPWS-95 and its density derivative at constant T. */
+    static double pressureIAPWS95(double rho, double T, double& dPdrho);
+
+    /* Solves pressureIAPWS95(rho, T) = P for the density. */
+    static double densityIAPWS95(double T, double P);
+
+    /* Isobaric thermal expansion coefficient from IAPWS-95; used for the
+    * finite-difference evaluation of alpha_t_. Does not touch member state. */
+    static double alphaIAPWS95(double T, double P);
+
+    /* Bisection-safeguarded Newton iteration solving pfn(rho, T) = P on the
+    * initial bracket [lo, hi]. */
+    using PressureFn = double (*)(double rho, double T, double& dPdrho);
+    static double solveDensity(PressureFn pfn, double T, double P,
+                               double lo, double hi);
 
     /* Auxiliary saturated liquid/vapour density correlations [kg/m^3]
     * (Wagner & Pruss auxiliary equations); used only for bracketing the

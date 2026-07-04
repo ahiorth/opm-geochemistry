@@ -257,13 +257,82 @@ TEST_CASE("Test IAPWS-97 region boundaries and dispatch")
     CHECK_THAT(water_r3.s_, Catch::Matchers::WithinRel(water_r2.s_, 2.0e-2));
 }
 
+TEST_CASE("Test water properties above 100 MPa with IAPWS-95")
+{
+    water water_props;
+
+    // Single-phase reference states from Table 7 of the IAPWS-95 release
+    // (Wagner & Pruss 2002, Table 6.6): inputs there are (T, rho); the
+    // pressures below are the tabulated P(T, rho), so the density iteration
+    // has to recover rho. Only the 700 MPa states exceed the IAPWS-97 range
+    // and are reachable through the (T, P) interface.
+    struct Iapws95Reference
+    {
+        double pressure_;     // Pa
+        double temperature_;  // K
+        double rho_;  // density (kg/m3)
+        double cv_;   // specific isochoric heat capacity (kJ/kg/K)
+        double w_;    // speed of sound (m/s)
+        double s_;    // specific entropy (kJ/kg/K)
+    };
+
+    static constexpr std::array<Iapws95Reference, 3> reference_cases =
+    {{
+        { 0.700004704e9, 300.0, 0.1188202e4, 0.346135580e1, 0.244357992e4, 0.132609616 },
+        { 0.700000405e9, 500.0, 0.1084564e4, 0.307437693e1, 0.241200877e4, 0.203237509e1 },
+        { 0.700000006e9, 900.0, 0.8707690e3, 0.266422350e1, 0.201933608e4, 0.417223802e1 },
+    }};
+
+    for(const auto& ref_props: reference_cases)
+    {
+        water_props.gibbsIAPWS(ref_props.temperature_, ref_props.pressure_);
+
+        CHECK(water_props.region_ == 95);
+        CHECK_THAT(water_props.denst_, Catch::Matchers::WithinRel(ref_props.rho_, 1.0e-6));
+        CHECK_THAT(1.0e-3*water_props.cv_, Catch::Matchers::WithinAbs(ref_props.cv_, abs_tolerance2_));
+        CHECK_THAT(water_props.w_, Catch::Matchers::WithinAbs(ref_props.w_, 1.0e-3));
+        CHECK_THAT(1.0e-3*water_props.s_, Catch::Matchers::WithinAbs(ref_props.s_, 1.0e-6));
+    }
+
+    // Continuity across the 100 MPa seam between IAPWS-97 and IAPWS-95
+    // (IAPWS-97 was fitted to IAPWS-95; consistency is a few 0.01%).
+    water water_97;
+    water water_95;
+
+    water_97.gibbsIAPWS(500.0, 99.99e6);  // region 1 side
+    CHECK(water_97.region_ == 1);
+    water_95.gibbsIAPWS(500.0, 100.01e6);
+    CHECK(water_95.region_ == 95);
+    CHECK_THAT(water_95.v_, Catch::Matchers::WithinRel(water_97.v_, 2.0e-3));
+    CHECK_THAT(water_95.h_, Catch::Matchers::WithinRel(water_97.h_, 2.0e-3));
+    CHECK_THAT(water_95.s_, Catch::Matchers::WithinRel(water_97.s_, 2.0e-3));
+    CHECK_THAT(water_95.alpha_, Catch::Matchers::WithinRel(water_97.alpha_, 1.0e-2));
+    CHECK_THAT(water_95.beta_, Catch::Matchers::WithinRel(water_97.beta_, 1.0e-2));
+
+    water_97.gibbsIAPWS(650.0, 99.99e6);  // region 3 side (exercises the near-critical terms)
+    CHECK(water_97.region_ == 3);
+    water_95.gibbsIAPWS(650.0, 100.01e6);
+    CHECK(water_95.region_ == 95);
+    CHECK_THAT(water_95.v_, Catch::Matchers::WithinRel(water_97.v_, 2.0e-3));
+    CHECK_THAT(water_95.h_, Catch::Matchers::WithinRel(water_97.h_, 2.0e-3));
+    CHECK_THAT(water_95.s_, Catch::Matchers::WithinRel(water_97.s_, 2.0e-3));
+
+    water_97.gibbsIAPWS(1000.0, 99.99e6);  // region 2 side
+    CHECK(water_97.region_ == 2);
+    water_95.gibbsIAPWS(1000.0, 100.01e6);
+    CHECK(water_95.region_ == 95);
+    CHECK_THAT(water_95.v_, Catch::Matchers::WithinRel(water_97.v_, 2.0e-3));
+    CHECK_THAT(water_95.h_, Catch::Matchers::WithinRel(water_97.h_, 2.0e-3));
+    CHECK_THAT(water_95.s_, Catch::Matchers::WithinRel(water_97.s_, 2.0e-3));
+}
+
 TEST_CASE("Test IAPWS-97 out-of-range conditions raise exceptions")
 {
     water water_props;
 
     CHECK_THROWS_AS(water_props.gibbsIAPWS(200.0, 1.0e6), std::domain_error);    // too cold
     CHECK_THROWS_AS(water_props.gibbsIAPWS(1200.0, 1.0e6), std::domain_error);   // region 5
-    CHECK_THROWS_AS(water_props.gibbsIAPWS(400.0, 150.0e6), std::domain_error);  // above 100 MPa
+    CHECK_THROWS_AS(water_props.gibbsIAPWS(400.0, 1500.0e6), std::domain_error); // above 1000 MPa
     CHECK_THROWS_AS(water_props.gibbsIAPWS(400.0, -1.0e6), std::domain_error);   // negative P
     CHECK_THROWS_AS(water::PsatIAPWS(700.0), std::domain_error);                 // above Tcrit
 

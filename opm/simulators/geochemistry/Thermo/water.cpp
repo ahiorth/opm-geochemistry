@@ -36,6 +36,10 @@ constexpr double R_H2O = 0.461526e3;    // specific gas constant of water [J/kg/
 constexpr double T_CRIT = 647.096;      // [K]
 constexpr double RHO_CRIT = 322.0;      // [kg/m^3]
 
+// IAPWS-95 uses a slightly different specific gas constant than IAPWS-97;
+// the reducing constants T_CRIT and RHO_CRIT are the same.
+constexpr double R_IAPWS95 = 461.51805;  // [J/kg/K]
+
 std::string rangeError(const char* what, double T, double P)
 {
     return std::string("water (IAPWS-97): ") + what
@@ -95,14 +99,19 @@ void water::gibbsIAPWSlocal(double T, double P)
     {
         throw std::domain_error(rangeError("non-positive pressure", T, P));
     }
-    if (P > 100.0e6)
+    if (P > 1000.0e6)
     {
-        throw std::domain_error(rangeError("pressure above 100 MPa", T, P));
+        throw std::domain_error(rangeError("pressure above 1000 MPa", T, P));
     }
 
     Psat_ = (T <= Tcrit_) ? PsatIAPWS(T) : std::numeric_limits<double>::quiet_NaN();
 
-    if (T <= 623.15)
+    if (P > 100.0e6)
+    {
+        // Outside the IAPWS-97 pressure range; use the IAPWS-95 scientific formulation
+        regionIAPWS95(T, P);
+    }
+    else if (T <= 623.15)
     {
         if (P >= Psat_)
         {
@@ -294,28 +303,7 @@ void water::region3(double T, double P)
     double phi_dt = 0.0;
     phiRegion3(delta, tau, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
 
-    // Table 31 of IAPWS-97 paper
-    v_ = 1.0 / rho;
-    u_ = R_*T*tau*phi_t;
-    s_ = R_*(tau*phi_t - phi);
-    h_ = R_*T*(tau*phi_t + delta*phi_d);
-    cv_ = -R_*tau*tau*phi_tt;
-    const double num = delta*phi_d - delta*tau*phi_dt;
-    const double den = 2.0*delta*phi_d + delta*delta*phi_dd;
-    cp_ = cv_ + R_*num*num / den;
-    w_ = sqrt(R_*T*(den - num*num / (tau*tau*phi_tt)));
-
-    g_ = R_*T*(phi + delta*phi_d);  // g = f + P/rho
-    G_ = g_*Mw_;
-    H_ = h_*Mw_;
-    denst_ = rho;
-
-    // alpha and beta from the P(rho, T) partial derivatives:
-    //   beta  = 1/(rho (dP/drho)_T),  alpha = beta (dP/dT)_rho
-    const double dPdT = rho*R_*delta*(phi_d - tau*phi_dt);
-    const double dPdrho = R_*T*den;
-    beta_ = 1.0 / (rho*dPdrho);
-    alpha_ = beta_*dPdT;
+    setFromHelmholtz(T, rho, R_, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
 
     // d(alpha)/dT along the isobar by central differences; an analytical
     // expression would require third derivatives of phi.
@@ -323,6 +311,30 @@ void water::region3(double T, double P)
     alpha_t_ = (region3Alpha(T + dT, P) - region3Alpha(T - dT, P)) / (2.0*dT);
 
     region_ = 3;
+}
+
+/* IAPWS-95 (Wagner & Pruss 2002), used for 100 MPa < P <= 1000 MPa where the
+ * industrial formulation does not apply. Helmholtz-based, like region 3. */
+void water::regionIAPWS95(double T, double P)
+{
+    const double rho = densityIAPWS95(T, P);
+    const double delta = rho / rho_crit_;
+    const double tau = Tcrit_ / T;
+
+    double phi = 0.0;
+    double phi_d = 0.0;
+    double phi_dd = 0.0;
+    double phi_t = 0.0;
+    double phi_tt = 0.0;
+    double phi_dt = 0.0;
+    phiIAPWS95(delta, tau, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
+
+    setFromHelmholtz(T, rho, R_IAPWS95, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
+
+    static constexpr double dT = 1.0e-2;
+    alpha_t_ = (alphaIAPWS95(T + dT, P) - alphaIAPWS95(T - dT, P)) / (2.0*dT);
+
+    region_ = 95;
 }
 
 /* Sets the member properties from the dimensionless Gibbs free energy and its
@@ -359,6 +371,40 @@ void water::setFromGibbs(double T, double P, double pstar, double tau,
 	alpha_t_ *= alpha_t_;
 	alpha_t_ = tau*tau*g_ptt*g_p - alpha_t_;
 	alpha_t_ = alpha_t_ / (T*T*g_p*g_p);
+}
+
+/* Sets the member properties (except alpha_t_) from the dimensionless Helmholtz
+ * free energy and its total derivatives with respect to delta and tau. Shared by
+ * IAPWS-97 region 3 (Table 31) and IAPWS-95 (Table 3 of the 1995 release; the
+ * formulas coincide when expressed in the total phi = phi0 + phir). */
+void water::setFromHelmholtz(double T, double rho, double R,
+                             double phi, double phi_d, double phi_dd,
+                             double phi_t, double phi_tt, double phi_dt)
+{
+    const double delta = rho / rho_crit_;
+    const double tau = Tcrit_ / T;
+
+    v_ = 1.0 / rho;
+    u_ = R*T*tau*phi_t;
+    s_ = R*(tau*phi_t - phi);
+    h_ = R*T*(tau*phi_t + delta*phi_d);
+    cv_ = -R*tau*tau*phi_tt;
+    const double num = delta*phi_d - delta*tau*phi_dt;
+    const double den = 2.0*delta*phi_d + delta*delta*phi_dd;
+    cp_ = cv_ + R*num*num / den;
+    w_ = sqrt(R*T*(den - num*num / (tau*tau*phi_tt)));
+
+    g_ = R*T*(phi + delta*phi_d);  // g = f + P/rho
+    G_ = g_*Mw_;
+    H_ = h_*Mw_;
+    denst_ = rho;
+
+    // alpha and beta from the P(rho, T) partial derivatives:
+    //   beta  = 1/(rho (dP/drho)_T),  alpha = beta (dP/dT)_rho
+    const double dPdT = rho*R*delta*(phi_d - tau*phi_dt);
+    const double dPdrho = R*T*den;
+    beta_ = 1.0 / (rho*dPdrho);
+    alpha_ = beta_*dPdT;
 }
 
 /* Dimensionless Helmholtz free energy of region 3 (Eq. 28/Table 30) and its derivatives. */
@@ -452,31 +498,37 @@ double water::region3Density(double T, double P)
         }
     }
 
-    double dPdrho = 0.0;
-    double flo = pressureRegion3(lo, T, dPdrho) - P;
-    double fhi = pressureRegion3(hi, T, dPdrho) - P;
+    return solveDensity(&water::pressureRegion3, T, P, lo, hi);
+}
 
-    // The brackets from the auxiliary correlations can be slightly off close to
-    // the saturation line; nudge them until the root is enclosed.
+/* Bisection-safeguarded Newton iteration solving pfn(rho, T) = P for rho. */
+double water::solveDensity(PressureFn pfn, double T, double P, double lo, double hi)
+{
+    double dPdrho = 0.0;
+    double flo = pfn(lo, T, dPdrho) - P;
+    double fhi = pfn(hi, T, dPdrho) - P;
+
+    // The initial brackets (e.g. from the auxiliary saturated-density
+    // correlations) can be slightly off; nudge them until the root is enclosed.
     for (int k=0; k < 400 && flo > 0.0; ++k)
     {
         lo *= 0.99;
-        flo = pressureRegion3(lo, T, dPdrho) - P;
+        flo = pfn(lo, T, dPdrho) - P;
     }
     for (int k=0; k < 400 && fhi < 0.0; ++k)
     {
         hi *= 1.01;
-        fhi = pressureRegion3(hi, T, dPdrho) - P;
+        fhi = pfn(hi, T, dPdrho) - P;
     }
     if (flo > 0.0 || fhi < 0.0)
     {
-        throw std::runtime_error(rangeError("could not bracket the region-3 density", T, P));
+        throw std::runtime_error(rangeError("could not bracket the density", T, P));
     }
 
     double rho = 0.5*(lo + hi);
     for (int it=0; it < 200; ++it)
     {
-        const double f = pressureRegion3(rho, T, dPdrho) - P;
+        const double f = pfn(rho, T, dPdrho) - P;
         if (std::fabs(f) <= 1.0e-10*P)
         {
             return rho;
@@ -504,7 +556,7 @@ double water::region3Density(double T, double P)
         rho = next;
     }
 
-    throw std::runtime_error(rangeError("region-3 density iteration did not converge", T, P));
+    throw std::runtime_error(rangeError("the density iteration did not converge", T, P));
 }
 
 /* Isobaric thermal expansion coefficient in region 3 (no member state is touched). */
@@ -524,6 +576,245 @@ double water::region3Alpha(double T, double P)
 
     const double dPdT = rho*R_H2O*delta*(phi_d - tau*phi_dt);
     const double dPdrho = R_H2O*T*(2.0*delta*phi_d + delta*delta*phi_dd);
+
+    return dPdT / (rho*dPdrho);
+}
+
+/* Dimensionless Helmholtz free energy of IAPWS-95, phi = phi0 + phir, and its
+ * derivatives (Wagner & Pruss 2002, Tables 6.1/6.2 or the IAPWS-95 release,
+ * Tables 1/2 with derivatives per Tables 4/5). */
+void water::phiIAPWS95(double delta, double tau,
+                       double& phi, double& phi_d, double& phi_dd,
+                       double& phi_t, double& phi_tt, double& phi_dt)
+{
+    // ---------------------------------------------------------------- ideal part
+    static constexpr std::array<double, 8> n0 =
+    {
+        -8.3204464837497, 6.6832105275932, 3.00632, 0.012436, 0.97315, 1.27950, 0.96956, 0.24873
+    };
+    static constexpr std::array<double, 5> gamma0 = { 1.28728967, 3.53734222, 7.74073708, 9.24437796, 27.5075105 };
+
+    phi = std::log(delta) + n0[0] + n0[1]*tau + n0[2]*std::log(tau);
+    phi_d = 1.0 / delta;
+    phi_dd = -1.0 / (delta*delta);
+    phi_t = n0[1] + n0[2] / tau;
+    phi_tt = -n0[2] / (tau*tau);
+    phi_dt = 0.0;
+
+    for (std::size_t i=0; i < gamma0.size(); ++i)
+    {
+        const double e = std::exp(-gamma0[i]*tau);
+        phi += n0[3+i]*std::log(1.0 - e);
+        phi_t += n0[3+i]*gamma0[i]*(1.0/(1.0 - e) - 1.0);
+        phi_tt -= n0[3+i]*gamma0[i]*gamma0[i]*e / ((1.0 - e)*(1.0 - e));
+    }
+
+    // ------------------------------------------------- residual: polynomial terms
+    static constexpr std::array<int, 7> d1 = { 1, 1, 1, 2, 2, 3, 4 };
+    static constexpr std::array<double, 7> t1 = { -0.5, 0.875, 1.0, 0.5, 0.75, 0.375, 1.0 };
+    static constexpr std::array<double, 7> n1 =
+    {
+        0.12533547935523e-1, 0.78957634722828e1, -0.87803203303561e1, 0.31802509345418,
+        -0.26145533859358, -0.78199751687981e-2, 0.88089493102134e-2
+    };
+
+    for (std::size_t i=0; i < n1.size(); ++i)
+    {
+        const double dd = static_cast<double>(d1[i]);
+        const double dp = std::pow(delta, dd);
+        const double tp = std::pow(tau, t1[i]);
+        const double f = n1[i]*dp*tp;
+
+        phi += f;
+        phi_d += f*dd/delta;
+        phi_dd += f*dd*(dd - 1.0)/(delta*delta);
+        phi_t += f*t1[i]/tau;
+        phi_tt += f*t1[i]*(t1[i] - 1.0)/(tau*tau);
+        phi_dt += f*dd*t1[i]/(delta*tau);
+    }
+
+    // ------------------------------------------------ residual: exponential terms
+    static constexpr std::array<int, 44> c2 = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                                2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                                                3, 3, 3, 3, 4, 6, 6, 6, 6 };
+    static constexpr std::array<int, 44> d2 = { 1, 1, 1, 2, 2, 3, 4, 4, 5, 7, 9, 10, 11, 13, 15,
+                                                1, 2, 2, 2, 3, 4, 4, 4, 5, 6, 6, 7, 9, 9, 9, 9, 9, 10, 10, 12,
+                                                3, 4, 4, 5, 14, 3, 6, 6, 6 };
+    static constexpr std::array<int, 44> t2 = { 4, 6, 12, 1, 5, 4, 2, 13, 9, 3, 4, 11, 4, 13, 1,
+                                                7, 1, 9, 10, 10, 3, 7, 10, 10, 6, 10, 10, 1, 2, 3, 4, 8, 6, 9, 8,
+                                                16, 22, 23, 23, 10, 50, 44, 46, 50 };
+    static constexpr std::array<double, 44> n2 =
+    {
+        -0.66856572307965, 0.20433810950965, -0.66212605039687e-4, -0.19232721156002, -0.25709043003438,
+        0.16074868486251, -0.40092828925807e-1, 0.39343422603254e-6, -0.75941377088144e-5, 0.56250979351888e-3,
+        -0.15608652257135e-4, 0.11537996422951e-8, 0.36582165144204e-6, -0.13251180074668e-11, -0.62639586912454e-9,
+        -0.10793600908932, 0.17611491008752e-1, 0.22132295167546, -0.40247669763528, 0.58083399985759,
+        0.49969146990806e-2, -0.31358700712549e-1, -0.74315929710341, 0.47807329915480, 0.20527940895948e-1,
+        -0.13636435110343, 0.14180634400617e-1, 0.83326504880713e-2, -0.29052336009585e-1, 0.38615085574206e-1,
+        -0.20393486513704e-1, -0.16554050063734e-2, 0.19955571979541e-2, 0.15870308324157e-3, -0.16388568342530e-4,
+        0.43613615723811e-1, 0.34994005463765e-1, -0.76788197844621e-1, 0.22446277332006e-1, -0.62689710414685e-4,
+        -0.55711118565645e-9, -0.19905718354408, 0.31777497330738, -0.11841182425981
+    };
+
+    for (std::size_t i=0; i < n2.size(); ++i)
+    {
+        const double cc = static_cast<double>(c2[i]);
+        const double dd = static_cast<double>(d2[i]);
+        const double tt = static_cast<double>(t2[i]);
+        const double dc = std::pow(delta, cc);
+        const double f = n2[i]*std::pow(delta, dd)*std::pow(tau, tt)*std::exp(-dc);
+
+        phi += f;
+        phi_d += f*(dd - cc*dc)/delta;
+        phi_dd += f*((dd - cc*dc)*(dd - 1.0 - cc*dc) - cc*cc*dc)/(delta*delta);
+        phi_t += f*tt/tau;
+        phi_tt += f*tt*(tt - 1.0)/(tau*tau);
+        phi_dt += f*(dd - cc*dc)*tt/(delta*tau);
+    }
+
+    // --------------------------------------------------- residual: Gaussian terms
+    static constexpr std::array<int, 3> d3 = { 3, 3, 3 };
+    static constexpr std::array<int, 3> t3 = { 0, 1, 4 };
+    static constexpr std::array<double, 3> n3 = { -0.31306260323435e2, 0.31546140237781e2, -0.25213154341695e4 };
+    static constexpr std::array<double, 3> alpha3 = { 20.0, 20.0, 20.0 };
+    static constexpr std::array<double, 3> beta3 = { 150.0, 150.0, 250.0 };
+    static constexpr std::array<double, 3> gamma3 = { 1.21, 1.21, 1.25 };
+    static constexpr std::array<double, 3> eps3 = { 1.0, 1.0, 1.0 };
+
+    for (std::size_t i=0; i < n3.size(); ++i)
+    {
+        const double dd = static_cast<double>(d3[i]);
+        const double tt = static_cast<double>(t3[i]);
+        const double f = n3[i]*std::pow(delta, dd)*std::pow(tau, tt)
+            *std::exp(-alpha3[i]*(delta - eps3[i])*(delta - eps3[i])
+                      - beta3[i]*(tau - gamma3[i])*(tau - gamma3[i]));
+        if (f == 0.0)
+        {
+            continue;
+        }
+
+        const double ad = dd/delta - 2.0*alpha3[i]*(delta - eps3[i]);
+        const double at = tt/tau - 2.0*beta3[i]*(tau - gamma3[i]);
+
+        phi += f;
+        phi_d += f*ad;
+        phi_dd += f*(ad*ad - dd/(delta*delta) - 2.0*alpha3[i]);
+        phi_t += f*at;
+        phi_tt += f*(at*at - tt/(tau*tau) - 2.0*beta3[i]);
+        phi_dt += f*ad*at;
+    }
+
+    // ----------------------------------------------- residual: nonanalytic terms
+    static constexpr std::array<double, 2> a4 = { 3.5, 3.5 };
+    static constexpr std::array<double, 2> b4 = { 0.85, 0.95 };
+    static constexpr std::array<double, 2> B4 = { 0.2, 0.2 };
+    static constexpr std::array<double, 2> n4 = { -0.14874640856724, 0.31861088019884 };
+    static constexpr std::array<double, 2> C4 = { 28.0, 32.0 };
+    static constexpr std::array<double, 2> D4 = { 700.0, 800.0 };
+    static constexpr std::array<double, 2> A4 = { 0.32, 0.32 };
+    static constexpr std::array<double, 2> beta4 = { 0.3, 0.3 };
+
+    // Nudge away from the removable singularity of the distance function at the
+    // critical density.
+    const double dm1 = (std::fabs(delta - 1.0) < 1.0e-10)
+        ? ((delta >= 1.0) ? 1.0e-10 : -1.0e-10)
+        : (delta - 1.0);
+    const double dm1sq = dm1*dm1;
+
+    for (std::size_t i=0; i < n4.size(); ++i)
+    {
+        const double psi = std::exp(-C4[i]*dm1sq - D4[i]*(tau - 1.0)*(tau - 1.0));
+        if (psi == 0.0)
+        {
+            // The term (and all its derivatives) vanishes; skipping also avoids
+            // overflow in the negative powers of (delta-1)^2 far from the
+            // critical point.
+            continue;
+        }
+
+        const double inv2beta = 1.0/(2.0*beta4[i]);
+        const double theta = (1.0 - tau) + A4[i]*std::pow(dm1sq, inv2beta);
+        const double Delta = theta*theta + B4[i]*std::pow(dm1sq, a4[i]);
+        const double Db = std::pow(Delta, b4[i]);
+
+        const double dDelta_dd = dm1*(A4[i]*theta*(2.0/beta4[i])*std::pow(dm1sq, inv2beta - 1.0)
+                                      + 2.0*B4[i]*a4[i]*std::pow(dm1sq, a4[i] - 1.0));
+        const double d2Delta_dd2 = dDelta_dd/dm1
+            + dm1sq*(4.0*B4[i]*a4[i]*(a4[i] - 1.0)*std::pow(dm1sq, a4[i] - 2.0)
+                     + 2.0*A4[i]*A4[i]/(beta4[i]*beta4[i])
+                       *std::pow(dm1sq, inv2beta - 1.0)*std::pow(dm1sq, inv2beta - 1.0)
+                     + A4[i]*theta*(4.0/beta4[i])*(inv2beta - 1.0)*std::pow(dm1sq, inv2beta - 2.0));
+
+        const double dDb_dd = b4[i]*std::pow(Delta, b4[i] - 1.0)*dDelta_dd;
+        const double d2Db_dd2 = b4[i]*(std::pow(Delta, b4[i] - 1.0)*d2Delta_dd2
+                                       + (b4[i] - 1.0)*std::pow(Delta, b4[i] - 2.0)*dDelta_dd*dDelta_dd);
+        const double dDb_dt = -2.0*theta*b4[i]*std::pow(Delta, b4[i] - 1.0);
+        const double d2Db_dt2 = 2.0*b4[i]*std::pow(Delta, b4[i] - 1.0)
+            + 4.0*theta*theta*b4[i]*(b4[i] - 1.0)*std::pow(Delta, b4[i] - 2.0);
+        const double d2Db_ddt = -A4[i]*b4[i]*(2.0/beta4[i])*std::pow(Delta, b4[i] - 1.0)*dm1
+                                  *std::pow(dm1sq, inv2beta - 1.0)
+            - 2.0*theta*b4[i]*(b4[i] - 1.0)*std::pow(Delta, b4[i] - 2.0)*dDelta_dd;
+
+        const double dpsi_dd = -2.0*C4[i]*dm1*psi;
+        const double d2psi_dd2 = (2.0*C4[i]*dm1sq - 1.0)*2.0*C4[i]*psi;
+        const double dpsi_dt = -2.0*D4[i]*(tau - 1.0)*psi;
+        const double d2psi_dt2 = (2.0*D4[i]*(tau - 1.0)*(tau - 1.0) - 1.0)*2.0*D4[i]*psi;
+        const double d2psi_ddt = 4.0*C4[i]*D4[i]*dm1*(tau - 1.0)*psi;
+
+        phi += n4[i]*Db*delta*psi;
+        phi_d += n4[i]*(Db*(psi + delta*dpsi_dd) + dDb_dd*delta*psi);
+        phi_dd += n4[i]*(Db*(2.0*dpsi_dd + delta*d2psi_dd2)
+                         + 2.0*dDb_dd*(psi + delta*dpsi_dd) + d2Db_dd2*delta*psi);
+        phi_t += n4[i]*delta*(dDb_dt*psi + Db*dpsi_dt);
+        phi_tt += n4[i]*delta*(d2Db_dt2*psi + 2.0*dDb_dt*dpsi_dt + Db*d2psi_dt2);
+        phi_dt += n4[i]*(Db*(dpsi_dt + delta*d2psi_ddt) + delta*dDb_dd*dpsi_dt
+                         + dDb_dt*(psi + delta*dpsi_dd) + d2Db_ddt*delta*psi);
+    }
+}
+
+/* Pressure from IAPWS-95: P = rho R T delta phi_delta, plus dP/drho at constant T. */
+double water::pressureIAPWS95(double rho, double T, double& dPdrho)
+{
+    const double delta = rho / RHO_CRIT;
+    const double tau = T_CRIT / T;
+
+    double phi = 0.0;
+    double phi_d = 0.0;
+    double phi_dd = 0.0;
+    double phi_t = 0.0;
+    double phi_tt = 0.0;
+    double phi_dt = 0.0;
+    phiIAPWS95(delta, tau, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
+
+    dPdrho = R_IAPWS95*T*(2.0*delta*phi_d + delta*delta*phi_dd);
+    return rho*R_IAPWS95*T*delta*phi_d;
+}
+
+/* Solves pressureIAPWS95(rho, T) = P for rho. Only used for P > 100 MPa, far
+ * above the critical pressure, where the isotherms have a single (liquid-like
+ * or supercritical) root. */
+double water::densityIAPWS95(double T, double P)
+{
+    return solveDensity(&water::pressureIAPWS95, T, P, 1.0, 2000.0);
+}
+
+/* Isobaric thermal expansion coefficient from IAPWS-95 (no member state is touched). */
+double water::alphaIAPWS95(double T, double P)
+{
+    const double rho = densityIAPWS95(T, P);
+    const double delta = rho / RHO_CRIT;
+    const double tau = T_CRIT / T;
+
+    double phi = 0.0;
+    double phi_d = 0.0;
+    double phi_dd = 0.0;
+    double phi_t = 0.0;
+    double phi_tt = 0.0;
+    double phi_dt = 0.0;
+    phiIAPWS95(delta, tau, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
+
+    const double dPdT = rho*R_IAPWS95*delta*(phi_d - tau*phi_dt);
+    const double dPdrho = R_IAPWS95*T*(2.0*delta*phi_d + delta*delta*phi_dd);
 
     return dPdT / (rho*dPdrho);
 }
