@@ -25,6 +25,8 @@
 #include <opm/simulators/geochemistry/Core/ChemGCSolver.h>
 #include <opm/simulators/geochemistry/Core/ChemInitChem.h>
 
+#include <cmath>
+
 BasVec* BasVec::createFromInitChem(InitChem* ICS)
 {
     return new BasVec(ICS);
@@ -1131,6 +1133,13 @@ double BasVec::solution_density() const
                         && static_cast<int>(SM_all.mol_volume_.size()) >= SM_all.noRows_;
     if (!basis_ok || !all_ok)
     {
+        static bool warned_missing = false;
+        if (!warned_missing)
+        {
+            fmt::print(stderr, "Warning: molecular weights/volumes are not available; "
+                               "Solution_density falls back to the pure water density.\n");
+            warned_missing = true;
+        }
         return ICS_->CP_.rho_w_;
     }
 
@@ -1138,7 +1147,11 @@ double BasVec::solution_density() const
     double volume = 1.0 / ICS_->CP_.rho_w_;   // [m^3]
 
     // Basis species (skip water itself and the electron).
-    // mol_weight_ is in kg/mol (fix_hkf_units), mol_volume_ in m^3/mol (hkf::dGIons).
+    // mol_weight_ is in kg/mol (fix_hkf_units). mol_volume_ is in m^3/mol as
+    // filled in by hkf::dGIons, which only covers the HKF rows; species with
+    // analytical logK have no HKF volume and contribute zero volume (their
+    // mol_volume_ entries are not unit-converted and must not be used here).
+    const int hkf_rows_basis = size_ - SM_basis.size_analytical_;
     for (int i = 0; i < size_; ++i)
     {
         if (SM_basis.type_[i] == GeochemicalComponentType::AQUEOUS_COMPLEX
@@ -1146,19 +1159,38 @@ double BasVec::solution_density() const
         {
             const double m = POW10(log_m_[i]);
             mass += m*SM_basis.mol_weight_[i];
-            volume += m*SM_basis.mol_volume_[i];
+            if (i < hkf_rows_basis)
+            {
+                volume += m*SM_basis.mol_volume_[i];
+            }
         }
     }
 
     // Secondary species/complexes
+    const int hkf_rows_all = SM_all.noRows_ - SM_all.size_analytical_;
     for (int i = 0; i < SM_all.noRows_; ++i)
     {
         if (SM_all.type_[i] == GeochemicalComponentType::AQUEOUS_COMPLEX)
         {
             const double m = POW10(SM_all.log_m_[i]);
             mass += m*SM_all.mol_weight_[i];
-            volume += m*SM_all.mol_volume_[i];
+            if (i < hkf_rows_all)
+            {
+                volume += m*SM_all.mol_volume_[i];
+            }
         }
+    }
+
+    if (!std::isfinite(volume) || volume <= 0.0)
+    {
+        static bool warned_volume = false;
+        if (!warned_volume)
+        {
+            fmt::print(stderr, "Warning: non-physical solution volume ({} m^3 per kg water); "
+                               "Solution_density falls back to the pure water density.\n", volume);
+            warned_volume = true;
+        }
+        return ICS_->CP_.rho_w_;
     }
 
     return mass / volume;

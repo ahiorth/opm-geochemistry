@@ -69,6 +69,13 @@ private:
     void ke(double T);
     void ke_t(double T);
     void ke_tt(double T);
+
+    /* The Johnson-Norton correlation (and the HKF machinery built on it)
+     * applies to liquid and supercritical water only; throws
+     * std::domain_error for sub-saturation (vapour) states, which the water
+     * EOS itself computes normally. Assumes W_->gibbsIAPWS(T, P) has been
+     * called. */
+    void requireLiquidOrSupercritical(double T, double P) const;
     
 };
 

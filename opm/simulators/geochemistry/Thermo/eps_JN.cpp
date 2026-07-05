@@ -23,6 +23,23 @@
 */
 #include <opm/simulators/geochemistry/Thermo/eps_JN.h>
 
+#include <stdexcept>
+#include <string>
+
+/* Water Psat_ is NaN above the critical temperature, so the comparison is
+ * false there and supercritical states pass. */
+void eps_JN::requireLiquidOrSupercritical(double T, double P) const
+{
+    if (P < W_->Psat_)
+    {
+        throw std::domain_error(
+            "eps_JN (Johnson-Norton): water is vapour at T=" + std::to_string(T)
+            + " K, P=" + std::to_string(P) + " Pa (below the saturation pressure "
+            + std::to_string(W_->Psat_) + " Pa). The dielectric constant and the"
+            " HKF aqueous-species properties require liquid or supercritical water.");
+    }
+}
+
 eps_JN::eps_JN(water* W)
 : permittivity_(0.0)
 , permittivity_P_(0.0)
@@ -96,7 +113,8 @@ void eps_JN::permittivity(double T, double P)
 {
     ke(T);
     W_->gibbsIAPWS(T, P);
-    
+    requireLiquidOrSupercritical(T, P);
+
     const double rho_1 = 1.0e-3 / W_->v_;
     const double rho_2 = rho_1 * rho_1;
     const double rho_3 = rho_1 * rho_2;
@@ -117,7 +135,8 @@ void eps_JN::permittivity_TP(double T, double P)
     ke_t(T);
     ke_tt(T);
     W_->gibbsIAPWS(T, P);
-    
+    requireLiquidOrSupercritical(T, P);
+
     const double alpha = W_->alpha_;
     const double beta = W_->beta_;
     const double alpha_t = W_->alpha_t_;

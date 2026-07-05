@@ -306,9 +306,11 @@ void water::region3(double T, double P)
     setFromHelmholtz(T, rho, R_, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
 
     // d(alpha)/dT along the isobar by central differences; an analytical
-    // expression would require third derivatives of phi.
+    // expression would require third derivatives of phi. The probes are
+    // bracketed around the converged density so that they stay on the same
+    // branch of the two-phase dome as the base state.
     static constexpr double dT = 1.0e-2;
-    alpha_t_ = (region3Alpha(T + dT, P) - region3Alpha(T - dT, P)) / (2.0*dT);
+    alpha_t_ = (region3Alpha(T + dT, P, rho) - region3Alpha(T - dT, P, rho)) / (2.0*dT);
 
     region_ = 3;
 }
@@ -332,7 +334,7 @@ void water::regionIAPWS95(double T, double P)
     setFromHelmholtz(T, rho, R_IAPWS95, phi, phi_d, phi_dd, phi_t, phi_tt, phi_dt);
 
     static constexpr double dT = 1.0e-2;
-    alpha_t_ = (alphaIAPWS95(T + dT, P) - alphaIAPWS95(T - dT, P)) / (2.0*dT);
+    alpha_t_ = (alphaIAPWS95(T + dT, P, rho) - alphaIAPWS95(T - dT, P, rho)) / (2.0*dT);
 
     region_ = 95;
 }
@@ -559,10 +561,13 @@ double water::solveDensity(PressureFn pfn, double T, double P, double lo, double
     throw std::runtime_error(rangeError("the density iteration did not converge", T, P));
 }
 
-/* Isobaric thermal expansion coefficient in region 3 (no member state is touched). */
-double water::region3Alpha(double T, double P)
+/* Isobaric thermal expansion coefficient in region 3 (no member state is touched).
+ * The bracket around rho_guess keeps the probe on the branch of the base state
+ * and warm-starts the solve; solveDensity widens the bracket if needed. */
+double water::region3Alpha(double T, double P, double rho_guess)
 {
-    const double rho = region3Density(T, P);
+    const double rho = solveDensity(&water::pressureRegion3, T, P,
+                                    0.9*rho_guess, 1.1*rho_guess);
     const double delta = rho / RHO_CRIT;
     const double tau = T_CRIT / T;
 
@@ -798,10 +803,13 @@ double water::densityIAPWS95(double T, double P)
     return solveDensity(&water::pressureIAPWS95, T, P, 1.0, 2000.0);
 }
 
-/* Isobaric thermal expansion coefficient from IAPWS-95 (no member state is touched). */
-double water::alphaIAPWS95(double T, double P)
+/* Isobaric thermal expansion coefficient from IAPWS-95 (no member state is touched).
+ * The bracket around rho_guess warm-starts the solve; solveDensity widens the
+ * bracket if needed. */
+double water::alphaIAPWS95(double T, double P, double rho_guess)
 {
-    const double rho = densityIAPWS95(T, P);
+    const double rho = solveDensity(&water::pressureIAPWS95, T, P,
+                                    0.9*rho_guess, 1.1*rho_guess);
     const double delta = rho / RHO_CRIT;
     const double tau = T_CRIT / T;
 

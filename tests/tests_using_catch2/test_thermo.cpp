@@ -326,6 +326,54 @@ TEST_CASE("Test water properties above 100 MPa with IAPWS-95")
     CHECK_THAT(water_95.s_, Catch::Matchers::WithinRel(water_97.s_, 2.0e-3));
 }
 
+TEST_CASE("HKF machinery rejects sub-saturation (steam) water states")
+{
+    hkf hkf_props;
+
+    // 150 C at 1 bar is steam (Psat = 4.76 bar): the water EOS computes it,
+    // but the dielectric/HKF chain requires liquid or supercritical water.
+    CHECK_THROWS_AS(hkf_props.WaterProp(423.15, 1.0e5), std::domain_error);
+
+    // Same temperature above the saturation pressure works.
+    hkf_props.WaterProp(423.15, 1.0e6);
+    CHECK(hkf_props.rhow_ > 900.0);
+
+    // The pure-water EOS itself still handles steam.
+    water water_props;
+    water_props.gibbsIAPWS(423.15, 1.0e5);
+    CHECK(water_props.region_ == 2);
+}
+
+TEST_CASE("Region 3 alpha_t is consistent and stays on one branch near saturation")
+{
+    static constexpr double T = 630.0;
+    const double Psat = water::PsatIAPWS(T);
+
+    // Validate alpha_t_ against a coarse finite difference of alpha_ at a
+    // pressure safely above the saturation line (all probes liquid).
+    water water_props;
+    water_props.gibbsIAPWS(T, Psat + 5.0e5);
+    CHECK(water_props.region_ == 3);
+    const double alpha_t_ref = water_props.alpha_t_;
+
+    water water_plus;
+    water water_minus;
+    water_plus.gibbsIAPWS(T + 0.5, Psat + 5.0e5);
+    water_minus.gibbsIAPWS(T - 0.5, Psat + 5.0e5);
+    const double alpha_t_fd = (water_plus.alpha_ - water_minus.alpha_) / 1.0;
+    CHECK_THAT(alpha_t_ref, Catch::Matchers::WithinRel(alpha_t_fd, 0.15));
+
+    // Within one finite-difference step of the saturation line
+    // (dPsat/dT ~ 0.35 MPa/K, probe dT = 0.01 K): the internal probes must
+    // stay on the liquid branch instead of flipping to the vapour root,
+    // which would produce a wildly wrong derivative.
+    water_props.gibbsIAPWS(T, Psat + 2.0e3);
+    CHECK(water_props.denst_ > 500.0);  // liquid branch
+    CHECK(std::isfinite(water_props.alpha_t_));
+    CHECK(water_props.alpha_t_*alpha_t_ref > 0.0);  // same sign
+    CHECK(std::fabs(water_props.alpha_t_) < 20.0*std::fabs(alpha_t_ref));
+}
+
 TEST_CASE("Test IAPWS-97 out-of-range conditions raise exceptions")
 {
     water water_props;

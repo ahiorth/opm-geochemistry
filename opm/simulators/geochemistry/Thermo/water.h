@@ -162,8 +162,12 @@ private:
     static double region3Density(double T, double P);
 
     /* Isobaric thermal expansion coefficient in region 3; used for the
-    * finite-difference evaluation of alpha_t_. Does not touch member state. */
-    static double region3Alpha(double T, double P);
+    * finite-difference evaluation of alpha_t_. The density solve is
+    * bracketed around rho_guess (the converged density of the base state) so
+    * that probes at T +/- dT stay on the same -- possibly metastable --
+    * branch near the saturation line instead of flipping between the liquid
+    * and vapour roots. Does not touch member state. */
+    static double region3Alpha(double T, double P, double rho_guess);
 
     /* Dimensionless Helmholtz free energy phi = phi0 + phir of IAPWS-95 and
     * its derivatives. delta = rho/rho_crit, tau = Tcrit/T. */
@@ -178,8 +182,10 @@ private:
     static double densityIAPWS95(double T, double P);
 
     /* Isobaric thermal expansion coefficient from IAPWS-95; used for the
-    * finite-difference evaluation of alpha_t_. Does not touch member state. */
-    static double alphaIAPWS95(double T, double P);
+    * finite-difference evaluation of alpha_t_, with the density solve
+    * bracketed around rho_guess as for region3Alpha. Does not touch member
+    * state. */
+    static double alphaIAPWS95(double T, double P, double rho_guess);
 
     /* Bisection-safeguarded Newton iteration solving pfn(rho, T) = P on the
     * initial bracket [lo, hi]. */

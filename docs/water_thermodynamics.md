@@ -79,6 +79,12 @@ The HKF g-function correction for effective ionic radii (Shock et al., 1992,
 155–355 °C between the saturation pressure and 1 kbar, and is identically
 zero at liquid-like densities (ρ > 1 g/cm³), i.e. at high pressure.
 
+While the pure-water EOS computes steam states normally (region 2), the
+dielectric model — and with it the whole HKF aqueous-species chain — is only
+meaningful for liquid or supercritical water. `eps_JN` therefore raises
+`std::domain_error` for sub-saturation (vapour) states, e.g. attempting to
+speciate at 150 °C and 1 bar.
+
 ## Solution (brine) density
 
 `BasVec::solution_density()` (`Core/ChemBasVec.cpp`) computes the density of
