@@ -1,0 +1,21 @@
+# Appelo, Parkhurst, and Post (2014), Figure 3B documented worst-fit point:
+# 0.93 mol/kg NaCl + 1.36 mol/kg CaCl2 at 5 C, measured rho=1154.1 kg/m3.
+# This interpretation reproduces the paper's stated measured mixed-salt
+# molar volume of approximately 12.2 cm3/mol.
+GEOCHEM
+Temp 5
+Pres 1.01325e5
+debug 0
+
+SOLUTION 0
+pH 7 charge
+Na 0.93
+Ca 1.36
+Cl 3.65
+/end
+
+chemtol
+1e-8 1e-5
+/end
+
+/end

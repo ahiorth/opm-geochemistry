@@ -70,20 +70,41 @@ The static dielectric constant of water and the Born functions Z, Q, Y, X are
 computed with the Johnson & Norton (1991) model
 (`Thermo/eps_JN.{h,cpp}`), a polynomial in water density with
 temperature-dependent coefficients. It is calibrated for 0–1000 °C and
-1–5000 bar. Above 500 MPa the model extrapolates in density; the trend
-remains smooth and physically reasonable up to 1000 MPa, but the Born
+1–5000 bar. Calculations from 500 to 1000 MPa deliberately extrapolate the
+model in density. The trend remains smooth, but the dielectric and Born
 derivative functions carry increasing uncertainty there.
 
 The HKF g-function correction for effective ionic radii (Shock et al., 1992,
-`Thermo/ions.{h,cpp}`) is active only in the low-density window
-155–355 °C between the saturation pressure and 1 kbar, and is identically
-zero at liquid-like densities (ρ > 1 g/cm³), i.e. at high pressure.
+`Thermo/ions.{h,cpp}`) consists of a density-dependent term minus an
+empirical difference function `f(T,P)`. The density-dependent term can be
+nonzero whenever ρ < 1 g/cm³. The `f` term and all of its derivatives are
+nonzero only for the strict window 155 °C < T < 355 °C and
+P<sub>sat</sub> < P < 1000 bar. Consequently, `g` is not generally zero
+outside the `f` window.
 
-While the pure-water EOS computes steam states normally (region 2), the
-dielectric model — and with it the whole HKF aqueous-species chain — is only
-meaningful for liquid or supercritical water. `eps_JN` therefore raises
-`std::domain_error` for sub-saturation (vapour) states, e.g. attempting to
-speciate at 150 °C and 1 bar.
+The analytical derivatives in `ions.cpp` are not specific to IF97 region 1.
+They use only the thermodynamic identities
+`rho_T = -alpha*rho`, `rho_P = beta*rho`, and
+`alpha_t = (d alpha/dT)_P`. Regions 1 and 2 provide these derivatives from
+their Gibbs formulations; region 3 and IAPWS-95 provide them from their
+Helmholtz formulations and density solves. Regression tests compare the
+water, dielectric, and final Born-coefficient derivatives with independent
+finite differences in all four branches. These are local derivatives within
+a smooth branch; a centered derivative must not straddle saturation, B23, or
+the 100 MPa IF97/IAPWS-95 switch.
+
+Pure-water and mineral properties remain available in IF97 region 2
+(steam). For such pure-water calls, `hkf::epsw_` is set to NaN because the
+aqueous dielectric state is not defined. Dielectric-dependent aqueous paths
+still raise `std::domain_error` for sub-saturation (vapour) states, e.g.
+attempting to speciate at 150 °C and 1 bar.
+
+Charged aqueous-species properties additionally require
+ρ ≥ 0.35 g/cm³. Since the public HKF interfaces return the complete
+G/H/S/Cp/V property set, charged states above 350 °C are rejected below
+1000 bar. At and above 1000 bar they remain available when the density
+criterion is met. Results between 5000 and 10000 bar use the deliberate
+Johnson-Norton extrapolation described above.
 
 ## Solution (brine) density
 
@@ -139,13 +160,14 @@ be considered approximate at the percent level.
 | `StandardStateProperties::V`          | m³/mol                 |
 | `Water_density`, `Solution_density`   | kg/m³                  |
 
-Note (July 2026): two unit errors in the previously unused molal-volume
-output of `hkf::dGIons`/`hkf::ionProperties` were fixed — a factor 1000 in
-the overall conversion (values were L/mol instead of m³/mol) and a spurious
-factor 10⁵ on the Born g-function pressure derivative inside its 155–355 °C
-window. Thermo tables generated before this fix show aqueous-species volumes
-that are wrong by these factors; Gibbs energies, entropies, heat capacities
-and log K values were not affected. See
+Note (July 2026): three defects in the previously unused molal-volume output
+of `hkf::dGIons`/`hkf::ionProperties` were fixed: a factor 1000 in the
+overall conversion, a spurious factor 10⁵ on the Born g-function pressure
+derivative, and use of the reference instead of current Born coefficient in
+the Q term. Thermo tables generated before these fixes have incorrect
+aqueous-species volumes. A related scalar-path fix initializes a neutral
+species with its constant reference Born coefficient, matching the bulk HKF
+path. See
 [hkf_molal_volume_unit_fixes.md](hkf_molal_volume_unit_fixes.md) for the
 full analysis.
 

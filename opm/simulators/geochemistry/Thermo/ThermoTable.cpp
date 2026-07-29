@@ -38,7 +38,8 @@ constexpr double g_cm3_per_kg_m3 = 1.0e-3;
 
 void appendField(std::ostringstream& stream, double value, int width, int precision)
 {
-    stream << std::setw(width) << std::fixed << std::setprecision(precision) << value;
+    // Keep a delimiter even when a value is wider than its nominal column.
+    stream << ' ' << std::setw(width - 1) << std::fixed << std::setprecision(precision) << value;
 }
 
 } // namespace
@@ -326,10 +327,13 @@ ThermoTableRow ThermoTableCalculator::evaluateOne(const SpeciesRef& species, dou
                                        minerals_.a2_[species.index],
                                        minerals_.a3_[species.index],
                                        minerals_.mol_volume_[species.index]);
-        logK = reactionLogK(minerals_, species.index, props, temperature_kelvin, pressure_pa);
         if (minerals_.row_name_[species.index] == "H2O,g")
         {
             logK = eos_.waterVaporLogK(temperature_kelvin, PhysicalConstants::standard_gas_pressure);
+        }
+        else
+        {
+            logK = reactionLogK(minerals_, species.index, props, temperature_kelvin, pressure_pa);
         }
     }
 

@@ -52,10 +52,9 @@ ions::ions(water* W)
 {
 }
 
-/*T=Kelvin and P in Pascal*/
-/*Valid for 1000bar>P> Psat and 155< T < 355C */
-/*Calculates f, df/dT, d2f/dT2, and df/dP*/
-/*Calculates g, dg/dT, d2g/dT2, and dg/dP*/
+/* T in Kelvin and P in Pascal.
+ * The f correction is restricted to Psat < P < 1000 bar and 155 < T < 355 C.
+ * The density-dependent part of g can remain nonzero outside that window. */
 void ions::born_df(double T, double P)
 {
     static constexpr double ag[] = { 0., -0.2037662e1, 0.5747e-2, -0.6557892e-5 };
@@ -64,34 +63,35 @@ void ions::born_df(double T, double P)
     
     double agg, bgg;
     
-    double Pr, Pr_inv, Tr_inv, Tr_p1, Tr_p2, P_p1, P_p2;
-    double Tr = (T - 155 - 273.15) / 300.;
-    if (Tr > 0.)
+    born_f_ = born_f_P_ = born_f_T_ = born_f_TT_ = 0.;
+
+    const double temperature_celsius = T - 273.15;
+    const bool within_f_domain = temperature_celsius > 155.0
+                                 && temperature_celsius < 355.0
+                                 && P > W_->Psat_
+                                 && P < 1000.0e5;
+    double Tr = (temperature_celsius - 155.0) / 300.0;
+    if (within_f_domain)
     {
-        Pr = 1000. - P * 1.e-5;
-        Pr_inv = 1. / Pr;
-        Tr_inv = 1. / Tr;
-        Tr_p1 = pow(Tr, 4.8);
-        Tr_p2 = pow(Tr, 16);
-        P_p1 = Pr * Pr * Pr;
-        P_p2 = P_p1 * Pr;
+        const double Pr = 1000.0 - P * 1.e-5;
+        const double Tr_inv = 1. / Tr;
+        const double Tr_p1 = pow(Tr, 4.8);
+        const double Tr_p2 = pow(Tr, 16);
+        const double P_p1 = Pr * Pr * Pr;
+        const double P_p2 = P_p1 * Pr;
         born_f_ = Tr_p1 + af[1] * Tr_p2;
         born_f_P_ = born_f_;
         born_f_TT_ = born_f_T_ = af[2] * P_p1 + af[3] * P_p2;
         born_f_ *= born_f_T_;
-        born_f_P_ *= -3. * af[2] * P_p1 - 4. * af[3] * P_p2;
-        born_f_P_ *= Pr_inv;
+        born_f_P_ *= -3. * af[2] * Pr * Pr - 4. * af[3] * P_p1;
         born_f_T_ *= 0.016 * Tr_p1 + 16. / 300. * af[1] * Tr_p2;
         born_f_T_ *= Tr_inv;
         born_f_TT_ *= 0.0608 / 300. * Tr_p1 + af[1] / 375. * Tr_p2;
         born_f_TT_ *= Tr_inv * Tr_inv;
     }
-    else {
-        born_f_ = born_f_P_ = born_f_T_ = born_f_TT_ = 0.;
-    }
     
     
-    Tr = T - 273.15;
+    Tr = temperature_celsius;
     agg = ag[1] + ag[2] * Tr + ag[3] * Tr * Tr;
     bgg = bg[1] + bg[2] * Tr + bg[3] * Tr * Tr;
 
@@ -105,21 +105,33 @@ void ions::born_df(double T, double P)
     if (rho_1 > 0.)
     {
         const double rho_1_inv = 1. / rho_1;
-
-
-
         const double rho_p = pow(rho_1, bgg);
-        const double rho_p_T = rho_p * (rho_ref * W_->alpha_ * bgg * rho_1_inv + bgg_T * log(rho_1));
-        const double rho_p_TT = rho_p_T * (rho_ref * W_->alpha_ * bgg * rho_1_inv + bgg_T * log(rho_1))
-            + rho_p * ((-W_->alpha_ * W_->alpha_ + W_->alpha_t_) * rho_ref * bgg * rho_1_inv
-                + rho_ref * W_->alpha_ * (bgg_T * rho_1_inv - W_->alpha_ * rho_ref * bgg * rho_1_inv * rho_1_inv)
-                + bgg_TT * log(rho_1) + bgg_T * rho_1_inv * W_->alpha_ * rho_ref);
+        const double log_rho_1 = log(rho_1);
+        const double rho_ratio = rho_ref * rho_1_inv;
+
+        // These identities use only rho_T = -alpha*rho and rho_P = beta*rho,
+        // so they apply to every smooth EOS region that supplies alpha, beta,
+        // and alpha_t = (d alpha/dT)_P.
+        const double dlog_rho_p_dT =
+            bgg_T * log_rho_1 + bgg * W_->alpha_ * rho_ratio;
+        const double d2log_rho_p_dT2 =
+            bgg_TT * log_rho_1
+            + 2. * bgg_T * W_->alpha_ * rho_ratio
+            + bgg * W_->alpha_t_ * rho_ratio
+            - bgg * W_->alpha_ * W_->alpha_ * rho_ref
+                * rho_1_inv * rho_1_inv;
+        const double dlog_rho_p_dPbar =
+            -bgg * W_->beta_ * 1.e5 * rho_ratio;
+
+        const double rho_p_T = rho_p * dlog_rho_p_dT;
+        const double rho_p_TT =
+            rho_p * (dlog_rho_p_dT * dlog_rho_p_dT + d2log_rho_p_dT2);
         u_ = rho_p;
         u_T_ = rho_p_T;
         u_TT_ = rho_p_TT;
 
         born_g_ = agg * rho_p - born_f_;
-        born_g_P_ = -agg * bgg * rho_ref * W_->beta_ * 1e5 * rho_p * rho_1_inv - born_f_P_;
+        born_g_P_ = agg * rho_p * dlog_rho_p_dPbar - born_f_P_;
         born_g_T_ = agg_T * rho_p + agg * rho_p_T - born_f_T_;
         born_g_TT_ = agg_TT * rho_p + 2. * agg_T * rho_p_T + agg * rho_p_TT - born_f_TT_;
     }
@@ -140,7 +152,7 @@ void ions::born_df(double T, double P)
     born_gp2_ *= born_gp2_;
 }
 
-/* Calculates f and g. Valid for 1000bar>P> Psat and 155< T < 355C. Units: [T]=K, [P]=Pa. */
+/* Legacy temperature-only f/g evaluator. The pressure-aware path is born_df. */
 void ions::born_f(double T)
 {
     double ag[] = { 0., -0.2037662e1, 0.5747e-2, -0.6557892e-5 };
@@ -149,8 +161,9 @@ void ions::born_f(double T)
     
     //double agg, bgg;
     //double Tr, Tr_p1, Tr_p2;
-    double Tr = (T - 155 - 273.15) / 300.;
-    if (Tr > 0.)
+    const double temperature_celsius = T - 273.15;
+    double Tr = (temperature_celsius - 155.0) / 300.0;
+    if (temperature_celsius > 155.0 && temperature_celsius < 355.0)
     {
         const double Tr_p1 = pow(Tr, 4.8);
         const double Tr_p2 = pow(Tr, 16);
@@ -160,7 +173,7 @@ void ions::born_f(double T)
         born_f_ = 0.;
     }
     
-    Tr = T - 273.15;
+    Tr = temperature_celsius;
     const double agg = ag[1] + ag[2] * Tr + ag[3] * Tr * Tr;
     const double bgg = bg[1] + bg[2] * Tr + bg[3] * Tr * Tr;
     

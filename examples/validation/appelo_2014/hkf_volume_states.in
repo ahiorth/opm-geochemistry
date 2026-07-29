@@ -1,0 +1,18 @@
+# Charged-species HKF volume smoke test over valid liquid/supercritical states.
+SPECIESLIST
+Na+
+Ca+2
+Cl-
+/ end
+
+TEMPS
+25 150 200 350 400 400 400 400
+/ end
+
+PRESSURES
+1.01325 10 500 999 1000 3000 5000 7000
+/ end
+
+TempUnit C
+PresUnit bar
+IncludeIndex 1

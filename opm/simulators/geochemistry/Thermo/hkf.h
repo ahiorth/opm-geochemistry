@@ -117,7 +117,11 @@ private:
     double Str_;
     double Ttr_;
 
-    void updateWaterState(double T, double P);
+    void updatePureWaterState(double T, double P);
+    void updateAqueousWaterState(double T, double P);
+    void requireChargedSpeciesDomain(double T, double P) const;
+    void requireChargedSpeciesDomain(double T, double P,
+                                     const double* charge, int size, int skip) const;
     [[nodiscard]] static double propertyShift(double G_ref, double H_ref, double S_ref, double T_ref);
     
 };

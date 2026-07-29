@@ -1,0 +1,22 @@
+# Appelo, Parkhurst, and Post (2014), Figure 1.
+# These ion volumes give the current SUPCRT-coefficient I=0 salt volumes.
+# They are not the fitted HKFmoRR intercepts in paper Table 2. The current
+# implementation also does not include the concentration terms in Eq. (6).
+SPECIESLIST
+H+
+Na+
+Ca+2
+Cl-
+/ end
+
+TEMPS
+25
+/ end
+
+PRESSURES
+1.01325
+/ end
+
+TempUnit C
+PresUnit bar
+IncludeIndex 0

@@ -24,6 +24,9 @@
 #include <opm/simulators/geochemistry/Thermo/hkf.h>
 
 #include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <string>
 
 hkf::hkf()
 : rhow_(0.0)
@@ -64,11 +67,63 @@ double hkf::propertyShift(double G_ref, double H_ref, double S_ref, double T_ref
     return H_ref - G_ref - T_ref*S_ref;
 }
 
-void hkf::updateWaterState(double T, double P)
+void hkf::updatePureWaterState(double T, double P)
+{
+    W_->gibbsIAPWS(T, P);
+    rhow_ = W_->denst_;
+
+    if (W_->region_ == 2)
+    {
+        epsw_ = std::numeric_limits<double>::quiet_NaN();
+        return;
+    }
+
+    EPS_->permittivity_TP(T, P);
+    epsw_ = EPS_->permittivity_;
+}
+
+void hkf::updateAqueousWaterState(double T, double P)
 {
     EPS_->permittivity_TP(T, P);
     rhow_ = W_->denst_;
     epsw_ = EPS_->permittivity_;
+}
+
+void hkf::requireChargedSpeciesDomain(double T, double P) const
+{
+    static constexpr double minimum_density = 350.0;       // kg/m^3
+    static constexpr double low_pressure_limit = 100.0e6;  // 1000 bar
+    static constexpr double low_pressure_max_T = 623.15;   // 350 C
+
+    if (!(rhow_ >= minimum_density))
+    {
+        throw std::domain_error(
+            "hkf: charged aqueous-species properties require water density >= "
+            + std::to_string(minimum_density) + " kg/m^3; got "
+            + std::to_string(rhow_) + " kg/m^3 at T=" + std::to_string(T)
+            + " K, P=" + std::to_string(P) + " Pa");
+    }
+    if (P < low_pressure_limit && T > low_pressure_max_T)
+    {
+        throw std::domain_error(
+            "hkf: complete charged aqueous-species properties at pressures below "
+            + std::to_string(low_pressure_limit) + " Pa require T <= "
+            + std::to_string(low_pressure_max_T) + " K; got T="
+            + std::to_string(T) + " K, P=" + std::to_string(P) + " Pa");
+    }
+}
+
+void hkf::requireChargedSpeciesDomain(double T, double P,
+                                      const double* charge, int size, int skip) const
+{
+    for (int i = 0; i < size; ++i)
+    {
+        if (i != skip && charge[i] != 0.0)
+        {
+            requireChargedSpeciesDomain(T, P);
+            return;
+        }
+    }
 }
 
 void hkf::WaterProp(double T, double P)
@@ -93,7 +148,7 @@ double hkf::waterVaporLogK(double T, double gas_activity_reference_pressure) con
 
 StandardStateProperties hkf::waterProperties(double T, double P)
 {
-    updateWaterState(T, P);
+    updatePureWaterState(T, P);
 
     StandardStateProperties props;
     props.G = W_->G_ + Gtr_ + Ttr_*Str_ - T*Str_;
@@ -114,7 +169,7 @@ StandardStateProperties hkf::mineralProperties(double T,
                                                double c,
                                                double V_ref)
 {
-    updateWaterState(T, P);
+    updatePureWaterState(T, P);
 
     const double dT = T - Tref_;
     const double dP = P - Pref_;
@@ -150,7 +205,11 @@ StandardStateProperties hkf::ionProperties(double T,
                                            double Z,
                                            double re_ref)
 {
-    updateWaterState(T, P);
+    updateAqueousWaterState(T, P);
+    if (Z != 0.0)
+    {
+        requireChargedSpeciesDomain(T, P);
+    }
     BORN_->born_df(T, P);
 
     const double dT = T - Tref_;
@@ -173,7 +232,9 @@ StandardStateProperties hkf::ionProperties(double T,
     const double Wref = Z_ref_ - EPS_->bornZ_ + Y_ref_*dT;
     const double W = -EPS_->bornZ_ - 1.0;
 
-    double Wi = 0.0;
+    // Neutral-species omega is independent of T and P in the revised HKF
+    // model; charged species replace it with the effective value below.
+    double Wi = omega;
     double w_T = 0.0;
     double w_TT = 0.0;
     double w_P = 0.0;
@@ -205,7 +266,11 @@ StandardStateProperties hkf::ionProperties(double T,
     // = 1e-5 m^3*bar/J: converts the volume sum from J/(mol*bar) to m^3/mol.
     // born_Q is in 1/Pa and needs the 1e5, while w_P is already in J/(mol*bar).
     const double Chat = 41.84e-6 / UnitConversionFactors::cal2J_;
-    props.V = a1 + a2*MV1 + (a3 + a4*MV1)*theta_diff_inv - 1e5*omega*EPS_->bornQ_ - (EPS_->bornZ_ + 1.0)*w_P;
+    // Wi, rather than the reference omega, multiplies Q: this is the pressure
+    // derivative of the same Born term used in props.G.
+    props.V = a1 + a2*MV1 + (a3 + a4*MV1)*theta_diff_inv
+              - 1e5*Wi*EPS_->bornQ_
+              - (EPS_->bornZ_ + 1.0)*w_P;
     props.V *= Chat;
 
     props.H = props.G + T*props.S + propertyShift(G_ref, H_ref, S_ref, Tref_);
@@ -230,14 +295,17 @@ void hkf::dGMineral(double T, double P, double* G, double* S, double* a, double*
     }
 }
 
-/* NB: Assumes already KNOWN water properties at P [Pa] and T [K]. */
-/* Note that we are actually using bar and as unit since Pressure is normalized to P_ref*/
+/* Updates the water/dielectric state at P [Pa] and T [K] before evaluation.
+ * Pressure terms below use bar because pressure is normalized to P_ref. */
 void hkf::dGIons(double T, double P, double* G, double* S,
                  double* a1, double* a2, double* a3, double* a4,
                  double* c1, double* c2,
                  double* omega, double* Z, double* re_ref, int size,
                  int skip, double* dG, double* MV)
 {
+    updateAqueousWaterState(T, P);
+    requireChargedSpeciesDomain(T, P, Z, size, skip);
+
     const double dT = T - Tref_;
     
     const double Tp = T / Tref_;
@@ -268,7 +336,7 @@ void hkf::dGIons(double T, double P, double* G, double* S,
     
     double ff;
     double Wi = 0.;
-    double w_T, w_TT, w_P, Wi_2;
+    double w_T, w_TT, w_P;
 
     for (int i = 0; i < size; ++i)
     {
@@ -277,24 +345,22 @@ void hkf::dGIons(double T, double P, double* G, double* S,
             if (Z[i] == 0.)
             {
                 ff = 0.;
+                Wi = omega[i];
                 w_T = w_TT = w_P = 0.;
             }
             else
             {
-//                BORN_->born(Z[i], re_ref[i], Wi);
-                
-                BORN_->born(Z[i], re_ref[i], Wi_2, w_T, w_TT, w_P);
-                Wi = Wi_2;
- //               w_P = 0.;
-                
+                BORN_->born(Z[i], re_ref[i], Wi, w_T, w_TT, w_P);
                 ff = (Wi-omega[i])*W;
             }
             dG[i] = G[i] - S[i] * dT + c1[i] * C1 + c2[i] * C2 + a1[i] * A1 + a2[i] * A2 + a3[i] * A3
             + a4[i] * A4 + ff + omega[i] * Wref;
             // Note that born_Q is in 1/Pa and needs the 1e5 to get back to bar
             // (consistent with the original paper), while w_P is already in
-            // J/(mol*bar): born_g_P_ is converted to 1/bar inside born_df.
-            MV[i] = a1[i] + a2[i] * MV1 + (a3[i] + a4[i] * MV1)*MV2 - 1e5*omega[i]*EPS_->bornQ_-(EPS_->bornZ_+1)*w_P;
+            // J/(mol*bar). Wi is the current Born coefficient in the Gibbs term.
+            MV[i] = a1[i] + a2[i] * MV1 + (a3[i] + a4[i] * MV1)*MV2
+                    - 1e5*Wi*EPS_->bornQ_
+                    - (EPS_->bornZ_ + 1)*w_P;
             MV[i] *= Chat;
             
             /* DEBUG*/

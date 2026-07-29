@@ -1,0 +1,17 @@
+# Water EOS smoke test spanning steam, liquid, region 3, the 1000 bar
+# IF97/IAPWS-95 switch, and the high-pressure extension.
+SPECIESLIST
+H2O
+/ end
+
+TEMPS
+25 150 150 200 350 400 400 400 400 400
+/ end
+
+PRESSURES
+1.01325 1 10 500 200 250 999 1000 3000 7000
+/ end
+
+TempUnit C
+PresUnit bar
+IncludeIndex 1

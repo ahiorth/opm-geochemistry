@@ -271,6 +271,11 @@ BasVecInfo EquilibriumSolver::solve(const std::string& case_name,
     }
 
     std::cout << " Final pH=" << pH << " Final Surface Charge " << scharge[0] << "\n";
+    std::cout << " Water_density[kg/m^3]="
+              << info.key_solution_properties_.at("Water_density")
+              << " Solution_density[kg/m^3]="
+              << info.key_solution_properties_.at("Solution_density")
+              << "\n";
     return info;
 }
 
@@ -1020,6 +1025,8 @@ std::vector<EffluentIonData> OneDimensionalTransportSolver::solve(const std::str
 std::string ThermoTableSolver::solve(const std::string& case_name,
                                      std::istream& inputStream)
 {
+    constexpr double water_critical_temperature_celsius = 373.946;
+
     (void)case_name;
 
     std::map<std::string, std::string> simple_key_value_pairs;
@@ -1065,11 +1072,19 @@ std::string ThermoTableSolver::solve(const std::string& case_name,
             row_temperatures.reserve(rows.size());
             for (const auto& row : rows)
             {
-                row_temperatures.push_back(row.T);
+                // IAPWS saturation pressure exists from the triple-point
+                // temperature through the critical temperature only.
+                if (row.T >= 0.0 && row.T <= water_critical_temperature_celsius)
+                {
+                    row_temperatures.push_back(row.T);
+                }
             }
 
-            output << "IAPWS97_PSAT_H2O\n";
-            output << calculator.evaluateWaterSaturationPressureFormatted(row_temperatures, include_index);
+            if (!row_temperatures.empty())
+            {
+                output << "IAPWS97_PSAT_H2O\n";
+                output << calculator.evaluateWaterSaturationPressureFormatted(row_temperatures, include_index);
+            }
         }
     }
 
