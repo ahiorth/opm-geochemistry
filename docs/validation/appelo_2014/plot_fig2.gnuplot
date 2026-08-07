@@ -12,7 +12,7 @@ set key outside right center
 
 species = "Na+ K+ Mg+2 Ca+2 Cl- HCO3- SO4-2"
 current = "/tmp/appelo_fig2.tsv"
-reference = "examples/validation/appelo_2014/fig2_supcrt92_reference.tsv"
+reference = "docs/validation/appelo_2014/fig2_supcrt92_reference.tsv"
 
 plot for [i=1:words(species)] current \
        using (strcol(1) eq word(species, i) ? $2 : 1/0):4 \

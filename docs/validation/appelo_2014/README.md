@@ -34,7 +34,7 @@ Run:
 
 ```sh
 build/GeoChemX THERMOTABLE \
-  examples/validation/appelo_2014/fig1_infinite_dilution.in
+  docs/validation/appelo_2014/fig1_infinite_dilution.in
 ```
 
 At 25 C and 1 atm the current results are:
@@ -74,7 +74,7 @@ Generate the table and a plot-friendly TSV:
 
 ```sh
 build/GeoChemX THERMOTABLE \
-  examples/validation/appelo_2014/fig2_supcrt_intrinsic_volumes.in \
+  docs/validation/appelo_2014/fig2_supcrt_intrinsic_volumes.in \
   > /tmp/appelo_fig2.out
 
 awk 'BEGIN {OFS="\t"; print "species","T_C","P_bar","V_cm3_mol"}
@@ -94,15 +94,15 @@ volume output.
 Compare all common samples numerically:
 
 ```sh
-awk -f examples/validation/appelo_2014/compare_fig2.awk \
-  examples/validation/appelo_2014/fig2_supcrt92_reference.tsv \
+awk -f docs/validation/appelo_2014/compare_fig2.awk \
+  docs/validation/appelo_2014/fig2_supcrt92_reference.tsv \
   /tmp/appelo_fig2.tsv
 ```
 
 Overlay the reference points and GeoChemX curves with:
 
 ```sh
-gnuplot examples/validation/appelo_2014/plot_fig2.gnuplot
+gnuplot docs/validation/appelo_2014/plot_fig2.gnuplot
 ```
 
 This writes `/tmp/appelo_fig2.png`. At the common 25 C increments from
@@ -147,7 +147,7 @@ writes result files next to its input:
 ```sh
 repo=$PWD
 work=$(mktemp -d)
-cp examples/validation/appelo_2014/fig3b_documented_point.dat "$work/"
+cp docs/validation/appelo_2014/fig3b_documented_point.dat "$work/"
 (cd "$work" && "$repo/build/GeoChemX" EQSOLVER fig3b_documented_point.dat)
 ```
 
@@ -180,10 +180,10 @@ The two additional inputs isolate the EOS behavior from the paper comparison:
 
 ```sh
 build/GeoChemX THERMOTABLE \
-  examples/validation/appelo_2014/water_eos_states.in
+  docs/validation/appelo_2014/water_eos_states.in
 
 build/GeoChemX THERMOTABLE \
-  examples/validation/appelo_2014/hkf_volume_states.in
+  docs/validation/appelo_2014/hkf_volume_states.in
 ```
 
 `water_eos_states.in` covers steam and liquid water at 150 C, region 3, the
